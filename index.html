@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>سوق السودان</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <h1 onclick="go('/')">🇸🇩 سوق السودان</h1>
+  <input id="q" type="text" placeholder="ابحث عن منتج...">
+  <button onclick="doSearch()">بحث</button>
+  <nav>
+    <a href="#/account">الحساب</a>
+    <a href="#/orders">طلباتي</a>
+    <a href="#/cart">🛒 السلة (<span id="cnt">0</span>)</a>
+    <a href="#/dash" id="dashlink" style="display:none">🏪 لوحتي</a>
+  </nav>
+  <select id="roleSel" onchange="switchRole(this.value)"></select>
+</header>
+
+<main id="app"></main>
+<footer><p>© سوق السودان - نسخة تجريبية (دفع تجريبي فقط)</p></footer>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="data.js"></script>
+<script src="core.js"></script>
+<script src="buyer.js"></script>
+<script src="seller.js"></script>
+<script src="reviews.js"></script>
+<script src="disputes.js"></script>
+<script src="chat.js"></script>
+<script src="owner.js"></script>
+<script src="owner-sellers.js"></script>
+<script src="app.js"></script>
+<script src="sync.js"></script>
+</body>
+</html>
