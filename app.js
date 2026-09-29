@@ -1,12 +1,9 @@
-function switchRole(v){
-  role=v; save();
-  go(v=="buyer"?"/":v=="owner"?"/owner":"/dash"); render();
-}
-
 function render(){
   const [,page,id]=location.hash.slice(1).split("/");
   const isOwner=role=="owner";
   const isSeller=role!="buyer"&&!isOwner;
+  const needsLogin=["dash","add","owner","checkout","orders","account"].includes(page);
+  if(needsLogin&&!session){ document.getElementById("app").innerHTML=loginForm("in"); window.scrollTo(0,0); return; }
   let html;
   if(page=="product")html=product(id);
   else if(page=="store")html=storePage(id);
@@ -24,14 +21,6 @@ function render(){
   dl.style.display=(isSeller||isOwner)?"inline":"none";
   dl.textContent=isOwner?"👑 لوحة المالك":"🏪 لوحتي";
   dl.href=isOwner?"#/owner":"#/dash";
-  document.getElementById("roleSel").value=role;
   window.scrollTo(0,0);
 }
-
-document.getElementById("roleSel").innerHTML=
-  `<option value="buyer">👤 مشتري</option>`+
-  Object.keys(sellers).map(k=>`<option value="${k}">🏪 ${sellers[k].name}</option>`).join("")+
-  `<option value="owner">👑 المالك</option>`;
-
 window.onhashchange=render;
-render();
