@@ -15,7 +15,8 @@ function render(){
   else if(page=="add"&&isSeller)html=addProductPage();
   else if(page=="owner"&&isOwner)html=ownerPage();
   else html=home();
-  document.getElementById("app").innerHTML=html;
+  const back=(typeof BACK_PAGES!=="undefined"&&BACK_PAGES.includes(page))?backBtn():"";
+  document.getElementById("app").innerHTML=back+html;
   document.getElementById("cnt").textContent=cart.reduce((a,c)=>a+c.qty,0);
   const dl=document.getElementById("dashlink");
   dl.style.display=(isSeller||isOwner)?"inline":"none";
