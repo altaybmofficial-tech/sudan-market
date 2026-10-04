@@ -9,7 +9,7 @@ async function loadPaymentExtras(){
       sb.from("sellers").select("id,bank_name,bank_account"),
       sb.from("orders").select("no,pay_method,pay_note,payout_done,receipt_url")
     ]);
-    paymentMethods = (pm.data||[]).filter(m=>m.active);
+    paymentMethods = pm.data||[];
     (se.data||[]).forEach(s=>{ if(sellers[s.id]){ sellers[s.id].bankName=s.bank_name||""; sellers[s.id].bankAccount=s.bank_account||""; } });
     (or.data||[]).forEach(o=>{
       const ord=orders.find(x=>x.no==o.no);
@@ -26,18 +26,19 @@ const _checkout = checkout;
 checkout = function(){
   const base = _checkout();
   if(!cart.length) return base;
-  const methods = paymentMethods.length
-    ? paymentMethods.map(m=>`<option value="${m.id}">${esc(m.name)} - ${esc(m.account)}</option>`).join("")
+  const active=paymentMethods.filter(m=>m.active);
+  const methods = active.length
+    ? active.map(m=>`<option value="${m.id}">${esc(m.name)} - ${esc(m.account)}</option>`).join("")
     : `<option value="">لا توجد وسيلة دفع مفعّلة، تواصل مع الإدارة</option>`;
   return base.replace(
     /<select><option>دفع تجريبي[\s\S]*?<\/button>/,
     `<p class="small">اختر وسيلة التحويل، وحوّل المبلغ الإجمالي، ثم ارفع صورة الإشعار:</p>
      <select id="pm_choice">${methods}</select>
-     <input id="pm_file" type="file" accept="image/*" capture="environment">
+     <input id="pm_file" type="file" accept="image/*">
      <p id="pm_status" class="small"></p>
      <textarea id="pm_note" rows="2" placeholder="رقم مرجع التحويل أو ملاحظة (اختياري)"></textarea>
      <div class="warn">⚠️ سيبقى طلبك بانتظار تأكيد الإدارة لاستلام المبلغ قبل أن يبدأ البائع بالتجهيز.</div>
-     <button class="wide" onclick="paySubmit()">📤 تأكيد إرسال التحويل</button>`
+     <button class="wide" id="pm_submit_btn" onclick="paySubmit()">📤 تأكيد إرسال التحويل</button>`
   );
 };
 
@@ -47,64 +48,79 @@ async function paySubmit(){
   const fileInput=document.getElementById("pm_file");
   const file=fileInput.files[0];
   const statusEl=document.getElementById("pm_status");
+  const btn=document.getElementById("pm_submit_btn");
   if(!pmId){alert("اختر وسيلة الدفع");return}
   if(!file){alert("ارفع صورة إشعار التحويل");return}
   if(file.size>5*1024*1024){alert("الصورة كبيرة جدًا (الحد 5MB)");return}
 
+  btn.disabled=true;
   statusEl.textContent="⏳ جاري رفع الصورة...";
   const path=(session?session.user.id:"anon")+"/"+Date.now()+"-"+file.name.replace(/[^a-zA-Z0-9.]/g,"_");
   const {error:upErr}=await sb.storage.from("receipts").upload(path,file);
-  if(upErr){alert("فشل رفع الصورة: "+upErr.message);statusEl.textContent="";return}
+  if(upErr){alert("فشل رفع الصورة: "+upErr.message);statusEl.textContent="";btn.disabled=false;return}
   const {data:urlData}=sb.storage.from("receipts").getPublicUrl(path);
 
   statusEl.textContent="";
   window._pendingPay={pmId,note,receiptUrl:urlData.publicUrl};
-  pay();
+  await pay();
 }
 
-const _pay2 = pay;
-pay = function(){
+// نستدعي الدالة الأصلية غير المعدّلة مباشرة (_pay من sync.js) لمنع تضارب حفظ مزدوج
+pay = async function(){
   const before=orders.length;
-  _pay2();
+  const beforeStock=Object.assign({},stock);
+  _pay();
   const added=orders.length-before;
+  Promise.all(products.filter(p=>stock[p.id]!==beforeStock[p.id]).map(pushProduct)).catch(e=>console.error(e));
   if(added>0){
     const info=window._pendingPay||{};
     const pmObj=paymentMethods.find(m=>m.id==info.pmId);
-    orders.slice(0,added).forEach(o=>{
+    for(const o of orders.slice(0,added)){
       o.status="AWAITING_PAYMENT_CONFIRM";
       o.payMethod=pmObj?pmObj.name:"";
       o.payNote=info.note||"";
       o.receiptUrl=info.receiptUrl||"";
       o.log.push([now(),"أرسل العميل إشعار تحويل عبر: "+(pmObj?pmObj.name:"")+" - "+(info.note||"")]);
-      pushOrder(o).catch(e=>console.error(e));
-      sb.from("orders").update({pay_method:o.payMethod,pay_note:o.payNote,payout_done:false,receipt_url:o.receiptUrl}).eq("no",o.no).catch(e=>console.error(e));
-    });
+      await pushOrder(o).catch(e=>console.error(e));
+    }
     window._pendingPay=null;
   }
+  render();
 };
 
 // ---- المالك: تأكيد استلام الدفع ----
-function confirmPayment(no){
+async function confirmPayment(no){
   const o=orders.find(x=>x.no==no);
-  if(!o||o.status!="AWAITING_PAYMENT_CONFIRM"){alert("لا يوجد ما يُؤكد");return}
+  if(!o){alert("الطلب غير موجود");return}
+  if(o.status!="AWAITING_PAYMENT_CONFIRM"){alert("حالة الطلب الحالية: "+(ST[o.status]||o.status)+"، لا يحتاج تأكيدًا الآن");return}
   o.status="PAID";
   o.log.push([now(),"أكدت الإدارة استلام مبلغ التحويل يدويًا"]);
   logAudit("تأكيد دفع الطلب "+no);
-  pushOrder(o).catch(e=>console.error(e));
+  await pushOrder(o).catch(e=>console.error(e));
   save(); render();
 }
 
 // ---- المالك: تأكيد تحويل مستحقات البائع ----
-function confirmPayout(no){
+async function confirmPayout(no){
   const o=orders.find(x=>x.no==no);
   if(!o||o.status!="SETTLED"){alert("متاح فقط بعد تمام التسليم");return}
   if(o.payoutDone){alert("تم التحويل مسبقًا");return}
   o.payoutDone=true;
   o.log.push([now(),"حوّلت الإدارة صافي المستحقات "+fmt(o.net)+" لحساب البائع يدويًا"]);
   logAudit("تحويل مستحقات البائع للطلب "+no+" - "+fmt(o.net));
-  pushOrder(o).catch(e=>console.error(e));
-  sb.from("orders").update({payout_done:true}).eq("no",no).catch(e=>console.error(e));
+  await pushOrder(o).catch(e=>console.error(e));
+  await sb.from("orders").update({payout_done:true}).eq("no",no).catch(e=>console.error(e));
   save(); render();
+}
+
+// ---- تفعيل/تعطيل وسيلة دفع (بدون حذف نهائي، حفاظًا على السجلات القديمة) ----
+async function deletePaymentMethod(id){
+  if(!confirm("حذف وسيلة الدفع هذه نهائيًا؟"))return;
+  const {error}=await sb.from("payment_methods").delete().eq("id",id);
+  if(error){alert("خطأ: "+error.message);return}
+  paymentMethods=paymentMethods.filter(x=>x.id!=id);
+  logAudit("حذف المالك وسيلة دفع");
+  render();
 }
 
 // ---- لوحة المالك: الطلبات المعلقة والتحويلات ووسائل الدفع ----
@@ -131,7 +147,11 @@ ownerPage = function(){
   }).join("")||"<div class='box'><p class='small'>لا توجد تحويلات معلّقة</p></div>");
 
   const pmHtml=`<h3>⚙️ وسائل الدفع (حسابات المنصة)</h3><br>
-    ${paymentMethods.map(m=>`<div class="box"><b>${esc(m.name)}</b><p class="small">${esc(m.account)}</p></div>`).join("")}
+    ${paymentMethods.map(m=>`<div class="box">
+      <b>${esc(m.name)}</b>
+      <p class="small">${esc(m.account)}</p>
+      <button class="wide" style="background:#fca5a5" onclick="deletePaymentMethod(${m.id})">🗑️ حذف</button>
+    </div>`).join("")}
     <div class="box"><h4>إضافة وسيلة جديدة</h4>
       <input id="pmn_name" placeholder="اسم الوسيلة (مثال: بنكك)">
       <input id="pmn_acc" placeholder="رقم الحساب">
@@ -167,4 +187,4 @@ function saveSellerBank(){
   sellers[role].bankName=name; sellers[role].bankAccount=acc;
   sb.from("sellers").update({bank_name:name,bank_account:acc}).eq("id",role).catch(e=>console.error(e));
   alert("تم الحفظ ✅"); render();
-}
+                                                             }
